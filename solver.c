@@ -73,12 +73,23 @@ static int check(const Puzzle *p) {
     return sum == word_value(p, p->result);
 }
 
+// Проверка, является ли буква первой в каком-либо слове
+static int is_leading_letter(const Puzzle *p, int idx) {
+    for (int i = 0; i < p->n; i++) {
+        if (p->words[i][0] - 'A' == idx) return 1;
+    }
+
+    return p->result[0] - 'A' == idx;
+}
+
 // Перебор всех назначений цифр буквам
 static int search(Puzzle *p, int pos) {
     if (pos == p->nletters) return check(p);
     int idx = p->letters[pos] - 'A';
     for (int d = 0; d <= 9; d++) {
         if (p->used[d]) continue;
+        if (d == 0 && is_leading_letter(p, idx)) continue;
+
         p->used[d] = 1;
         p->digit[idx] = d;
         if (search(p, pos + 1)) return 1;
