@@ -12,9 +12,12 @@
 #define MAX_LEN   32
 
 typedef struct {
-    char words[MAX_WORDS][MAX_LEN]; // words[0..n-1] - слагаемые
-    int  n;                         // число слагаемых
-    char result[MAX_LEN];           // правая часть
+    char words[MAX_WORDS][MAX_LEN];
+    int  n;
+    int  word_lengths[MAX_WORDS]; // длины слагаемых
+    char result[MAX_LEN];
+    int  result_len;              // длина результата
+    int  max_len;                 // максимальная длина слова
     char letters[26];               // уникальные буквы
     int  nletters;
     int  digit[26];                 // буква -> цифра
@@ -55,7 +58,22 @@ static int parse(const char *s, Puzzle *p) {
             s++; // пробелы и '+'
         }
     }
-    return p->n >= 2 && p->result[0] != '\0' && p->nletters <= 10;
+    if (p->n < 2 || p->result[0] == '\0' || p->nletters > 10) {
+    return 0;
+    }
+
+    p->result_len = (int)strlen(p->result);
+    p->max_len = p->result_len;
+
+    for (int i = 0; i < p->n; i++) {
+        p->word_lengths[i] = (int)strlen(p->words[i]);
+
+        if (p->word_lengths[i] > p->max_len) {
+            p->max_len = p->word_lengths[i];
+        }
+    }
+
+    return 1;
 }
 
 // Проверка, является ли буква первой в каком-либо слове
@@ -67,20 +85,6 @@ static int is_leading_letter(const Puzzle *p, int idx) {
     return p->result[0] - 'A' == idx;
 }
 
-// Находим максимальную длину слова в ребусе
-static int max_word_length(const Puzzle *p) {
-    int max_len = (int)strlen(p->result);
-
-    for (int i = 0; i < p->n; i++) {
-        int len = (int)strlen(p->words[i]);
-        if (len > max_len) {
-            max_len = len;
-        }
-    }
-
-    return max_len;
-}
-
 // Переход к следующему столбцу
 static int column_search(Puzzle *p, int col, int carry);
 
@@ -88,7 +92,7 @@ static int column_search(Puzzle *p, int col, int carry);
 static int column_addends(Puzzle *p, int col, int word_idx,
                           unsigned long long sum) {
     if (word_idx == p->n) {
-        int result_len = (int)strlen(p->result);
+        int result_len = p->result_len;
 
         // Все разряды результата уже обработаны
         if (col >= result_len) {
@@ -123,7 +127,7 @@ static int column_addends(Puzzle *p, int col, int word_idx,
         return 0;
     }
 
-    int len = (int)strlen(p->words[word_idx]);
+    int len = p->word_lengths[word_idx];
 
     // В этом слагаемом больше нет цифр
     if (col >= len) {
@@ -159,7 +163,7 @@ static int column_addends(Puzzle *p, int col, int word_idx,
 
 // Проверяем ребус по столбцам справа налево
 static int column_search(Puzzle *p, int col, int carry) {
-    if (col >= max_word_length(p)) {
+    if (col >= p->max_len) {
         return carry == 0;
     }
 
