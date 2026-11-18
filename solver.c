@@ -24,6 +24,9 @@ typedef struct {
 // Разбор строки вида "SEND + MORE = MONEY"
 static int parse(const char *s, Puzzle *p) {
     memset(p, 0, sizeof *p);
+    for (int i = 0; i < 26; i++) {
+    p->digit[i] = -1;
+    }
     int seen[26] = {0};
     int after_eq = 0;
     while (*s) {
@@ -55,24 +58,6 @@ static int parse(const char *s, Puzzle *p) {
     return p->n >= 2 && p->result[0] != '\0' && p->nletters <= 10;
 }
 
-static unsigned long long word_value(const Puzzle *p, const char *w) {
-    unsigned long long v = 0;
-    for (; *w; w++) v = v * 10 + p->digit[*w - 'A'];
-    return v;
-}
-
-// Проверка полностью назначенных цифр
-static int check(const Puzzle *p) {
-    // ведущие нули не допускаются
-    for (int i = 0; i < p->n; i++)
-        if (p->digit[p->words[i][0] - 'A'] == 0) return 0;
-    if (p->digit[p->result[0] - 'A'] == 0) return 0;
-
-    unsigned long long sum = 0;
-    for (int i = 0; i < p->n; i++) sum += word_value(p, p->words[i]);
-    return sum == word_value(p, p->result);
-}
-
 // Проверка, является ли буква первой в каком-либо слове
 static int is_leading_letter(const Puzzle *p, int idx) {
     for (int i = 0; i < p->n; i++) {
@@ -82,20 +67,103 @@ static int is_leading_letter(const Puzzle *p, int idx) {
     return p->result[0] - 'A' == idx;
 }
 
-// Перебор всех назначений цифр буквам
-static int search(Puzzle *p, int pos) {
-    if (pos == p->nletters) return check(p);
-    int idx = p->letters[pos] - 'A';
+// Находим максимальную длину слова в ребусе
+static int max_word_length(const Puzzle *p) {
+    int max_len = (int)strlen(p->result);
+
+    for (int i = 0; i < p->n; i++) {
+        int len = (int)strlen(p->words[i]);
+        if (len > max_len) {
+            max_len = len;
+        }
+    }
+
+    return max_len;
+}
+
+// Переход к следующему столбцу
+static int column_search(Puzzle *p, int col, int carry);
+
+// Перебор слагаемых в текущем столбце
+static int column_addends(Puzzle *p, int col, int word_idx,
+                          unsigned long long sum) {
+    if (word_idx == p->n) {
+        int result_len = (int)strlen(p->result);
+
+        // Все разряды результата уже обработаны
+        if (col >= result_len) {
+            if (sum % 10 != 0) return 0;
+            return column_search(p, col + 1, (int)(sum / 10));
+        }
+
+        int idx = p->result[result_len - 1 - col] - 'A';
+        int expected = (int)(sum % 10);
+        int carry = (int)(sum / 10);
+
+        // Цифра результата уже назначена
+        if (p->digit[idx] != -1) {
+            if (p->digit[idx] != expected) return 0;
+            return column_search(p, col + 1, carry);
+        }
+
+        // Цифра результата ещё не назначена
+        if (p->used[expected]) return 0;
+        if (expected == 0 && is_leading_letter(p, idx)) return 0;
+
+        p->digit[idx] = expected;
+        p->used[expected] = 1;
+
+        int ok = column_search(p, col + 1, carry);
+
+        if (ok) return 1;
+
+        p->used[expected] = 0;
+        p->digit[idx] = -1;
+
+        return 0;
+    }
+
+    int len = (int)strlen(p->words[word_idx]);
+
+    // В этом слагаемом больше нет цифр
+    if (col >= len) {
+        return column_addends(p, col, word_idx + 1, sum);
+    }
+
+    int idx = p->words[word_idx][len - 1 - col] - 'A';
+
+    // Букве уже назначена цифра
+    if (p->digit[idx] != -1) {
+        return column_addends(p, col, word_idx + 1,
+                              sum + p->digit[idx]);
+    }
+
+    // Перебираем цифры для ещё не назначенной буквы
     for (int d = 0; d <= 9; d++) {
         if (p->used[d]) continue;
         if (d == 0 && is_leading_letter(p, idx)) continue;
 
-        p->used[d] = 1;
         p->digit[idx] = d;
-        if (search(p, pos + 1)) return 1;
+        p->used[d] = 1;
+
+        if (column_addends(p, col, word_idx + 1, sum + d)) {
+            return 1;
+        }
+
         p->used[d] = 0;
+        p->digit[idx] = -1;
     }
+
     return 0;
+}
+
+// Проверяем ребус по столбцам справа налево
+static int column_search(Puzzle *p, int col, int carry) {
+    if (col >= max_word_length(p)) {
+        return carry == 0;
+    }
+
+    return column_addends(p, col, 0, (unsigned long long)carry);
 }
 
 // Основная функция: ребус -> решённое выражение.
@@ -103,7 +171,7 @@ static int search(Puzzle *p, int pos) {
 int solve_rebus(const char *input, char *out, size_t out_size) {
     Puzzle p;
     if (!parse(input, &p)) return 0;
-    if (!search(&p, 0)) return 0;
+    if (!column_search(&p, 0, 0)) return 0;
 
     size_t k = 0;
     for (const char *s = input; *s && k + 1 < out_size; s++)
@@ -120,18 +188,27 @@ int main(void) {
         "BIG + CAT = LION",
         "ELEVEN + NINE + FIVE + FIVE = THIRTY",
     };
+
     for (size_t i = 0; i < sizeof tests / sizeof *tests; i++) {
         char out[128];
+        const int repetitions = 10000;
+        int ok = 0;
+
         clock_t t0 = clock();
 
-    int ok = solve_rebus(tests[i], out, sizeof out);
+        for (int j = 0; j < repetitions; j++) {
+            ok = solve_rebus(tests[i], out, sizeof out);
+        }
 
-    clock_t t1 = clock();
+        clock_t t1 = clock();
 
-    double ms = (double)(t1 - t0) * 1000.0
-          / CLOCKS_PER_SEC;
-        printf("%-40s -> %-36s %9.3f ms\n", tests[i], ok ? out : "нет решения", ms);
+        double ms = 1000.0 * (double)(t1 - t0) /
+                    CLOCKS_PER_SEC / repetitions;
+
+        printf("%-40s -> %-36s %9.6f ms\n",
+               tests[i], ok ? out : "нет решения", ms);
     }
+
     return 0;
 }
 #endif
